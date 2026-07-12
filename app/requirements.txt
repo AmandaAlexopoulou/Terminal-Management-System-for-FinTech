@@ -1,0 +1,19 @@
+# Web framework
+Flask==3.0.3
+
+# ORM / SQL toolkit (χρησιμοποιείται εδώ ως connection-pool manager +
+# parameterized query builder μέσω text(), όχι με πλήρη ORM model classes —
+# αρκεί και είναι σαφώς πιο απλό για τις ανάγκες της εργασίας)
+SQLAlchemy==2.0.32
+
+# MySQL driver (dialect "mysql+pymysql://" που χρησιμοποιεί το SQLAlchemy)
+PyMySQL==1.1.1
+
+# Data processing (θα χρησιμοποιηθεί στο Feature D — στατιστικά με Pandas)
+pandas==2.2.2
+
+# Env var loading από .env αρχείο (για local/manual testing εκτός Docker)
+python-dotenv==1.0.1
+
+# Redis client (caching layer — Feature C)
+redis==5.0.8
