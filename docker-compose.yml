@@ -3,10 +3,11 @@
 # ============================================================================
 # Σηκώνει ολόκληρο το σύστημα με ένα μόνο: `docker compose up`
 #
-# 3 services:
+# 4 services (3 απαιτούμενα + 1 bonus):
 #   1) mysql    -> η κύρια βάση δεδομένων (terminals, merchants, templates)
 #   2) redis    -> caching layer (Feature C)
 #   3) tms-api  -> το Flask REST API μας
+#   4) tms-cron -> [BONUS] nightly cleanup του decommission_queue
 #
 # Σημείωση: δεν βάζουμε πεδίο "version:" στην κορυφή, γιατί είναι πλέον
 # deprecated στο σύγχρονο Docker Compose (V2 plugin) — απλά αγνοείται και
@@ -94,6 +95,32 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------
+  # tms-cron — [BONUS] nightly cleanup του decommission_queue
+  # --------------------------------------------------------------------
+  tms-cron:
+    build:
+      context: ./cron
+      dockerfile: Dockerfile
+    container_name: tms-cron
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      # Ώρα (UTC) του nightly cleanup — default 02:00.
+      CRON_HOUR: ${CRON_HOUR:-2}
+      CRON_MINUTE: ${CRON_MINUTE:-0}
+      # true -> τρέχει ΚΑΙ ένα άμεσο cleanup στο startup, βολικό για
+      # demo/testing ώστε να μη χρειάζεται να περιμένετε 24ωρο.
+      CLEANUP_RUN_ON_STARTUP: ${CLEANUP_RUN_ON_STARTUP:-false}
+    depends_on:
+      # Το tms-cron ΔΕΝ χρειάζεται το redis (δεν αγγίζει cache), μόνο mysql.
+      mysql:
         condition: service_healthy
 
 volumes:

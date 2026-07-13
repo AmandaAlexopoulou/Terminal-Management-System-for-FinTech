@@ -95,11 +95,45 @@ tms/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── cleanup.py
+├── scripts/
+│   └── smoke_test.ps1          (αυτοματοποιημένο end-to-end test, όλα τα features)
 └── db/
     └── init/
         ├── 01_schema.sql   (placeholder — αντικαταστήστε με το επίσημο)
         └── 02_seed.sql     (placeholder — αντικαταστήστε με το επίσημο)
 ```
+
+## Πλήρες End-to-End Test (προτεινόμενο πρώτο βήμα)
+
+Αντί να τρέχετε endpoints ένα-ένα χειροκίνητα, το `scripts/smoke_test.ps1`
+περνάει από **όλα** τα features (A, B, C, D + τα 3 bonus) σε μία εκτέλεση,
+με καθαρό OK/FAIL output ανά βήμα:
+
+```powershell
+docker compose up --build -d   # -d: στο background, ώστε να μείνει ελεύθερο το terminal
+.\scripts\smoke_test.ps1
+```
+
+Αν δείτε `PSSecurityException` / "cannot be loaded because running scripts
+is disabled", επιτρέψτε την εκτέλεση **μόνο για αυτό το process** (δεν
+αλλάζει μόνιμες ρυθμίσεις ασφαλείας):
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\smoke_test.ps1
+```
+
+Το script είναι ασφαλές να ξανατρέξει πολλές φορές — κάθε φορά δημιουργεί
+ΝΕΟ terminal μέσω `from-template`, οπότε δεν συγκρούεται με terminals από
+προηγούμενα runs.
+
+> **Σημείωση:** το script είναι σκόπιμα γραμμένο σε καθαρά αγγλικά (σχόλια
+> και μηνύματα), όχι επειδή "δεν επιτρέπονται" ελληνικά σε PowerShell
+> scripts, αλλά για να αποφευχθεί ένα γνωστό πρόβλημα: η Windows
+> PowerShell 5.1 (η built-in, όχι το PowerShell 7) διαβάζει `.ps1` αρχεία
+> χωρίς UTF-8 BOM χρησιμοποιώντας το codepage των Windows, πράγμα που
+> «σπάει» πολυ-byte ελληνικούς χαρακτήρες και μπορεί να προκαλέσει
+> parse errors. Αγγλικά μόνο = δουλεύει παντού, ανεξαρτήτως έκδοσης
+> PowerShell/codepage.
 
 ## Επιβεβαίωση caching (Feature C)
 
@@ -219,7 +253,7 @@ Invoke-RestMethod : {"error":"terminal already decommissioned"}
 ```
 Αναμενόμενη συμπεριφορά — επιβεβαιώνει το duplicate-decommission guard.
 
-## Σημειώσεις σχεδίασης (χρήσιμο για το interview/παρουσίαση)
+## Σημειώσεις σχεδίασης
 
 - Το SQLAlchemy χρησιμοποιείται ως connection-pool manager + query builder
   (`text()` με bind parameters), όχι ως πλήρες ORM με model classes — αρκεί
