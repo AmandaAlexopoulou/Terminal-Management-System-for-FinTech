@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS terminals (
     tid              VARCHAR(20)  NOT NULL PRIMARY KEY,
     mid              VARCHAR(20)  NOT NULL,
     hardware_model   VARCHAR(60)  NOT NULL,
+    -- hardware_family: χρησιμοποιείται στο Feature B3 (αντιγράφεται από το
+    -- template κατά τη δημιουργία) και στο Feature D3 (groupby στατιστικά).
+    -- NULL επιτρέπεται ώστε παλιές γραμμές (πριν προστεθεί η στήλη) να μην
+    -- σπάνε τίποτα — βλ. και ensure_column() στο main.py.
+    hardware_family  VARCHAR(60)  NULL,
     software_version VARCHAR(30)  NOT NULL,
     enabled          TINYINT(1)   NOT NULL DEFAULT 1,
     last_call        DATETIME     NULL,
@@ -33,13 +38,17 @@ CREATE TABLE IF NOT EXISTS terminals (
     -- Σκόπιμα ΔΕΝ ορίζουμε εδώ τη στήλη `updated_on`: η εκφώνηση (Feature
     -- A4) ζητάει ρητά να προστεθεί ΑΠΟ ΤΟΝ ΚΩΔΙΚΑ, με idempotent
     -- ALTER TABLE, ως άσκηση σε "safe migrations" — βλ. main.py,
-    -- ensure_updated_on_column().
+    -- ensure_column().
     CONSTRAINT fk_terminals_mid FOREIGN KEY (mid) REFERENCES merchants(mid)
 );
 
 CREATE TABLE IF NOT EXISTS templates (
-    template_id      VARCHAR(20)  NOT NULL PRIMARY KEY,
+    -- Αριθμητικό, auto-increment ID: το B3 της εκφώνησης δίνει ρητά
+    -- παράδειγμα με "template_id": 1 (αριθμός) στο request body, όχι
+    -- string κωδικό.
+    template_id      INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
     hardware_model   VARCHAR(60)  NOT NULL,
+    hardware_family  VARCHAR(60)  NULL,
     software_version VARCHAR(30)  NOT NULL,
     description       VARCHAR(200)
 );
