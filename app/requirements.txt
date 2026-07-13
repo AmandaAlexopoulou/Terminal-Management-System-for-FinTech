@@ -5,12 +5,16 @@ Flask==3.0.3
 # parameterized query builder μέσω text(), όχι με πλήρη ORM model classes —
 # αρκεί και είναι σαφώς πιο απλό για τις ανάγκες της εργασίας)
 SQLAlchemy==2.0.32
-cryptography==43.0.1
-#χρειάστηκε λόγω αιφνιδίου σφάλματος
+
 # MySQL driver (dialect "mysql+pymysql://" που χρησιμοποιεί το SQLAlchemy)
 PyMySQL==1.1.1
 
-# Data processing (θα χρησιμοποιηθεί στο Feature D — στατιστικά με Pandas)
+# Απαιτείται από το PyMySQL για το auth method "caching_sha2_password" που
+# χρησιμοποιεί by default η MySQL 8 — χωρίς αυτό, η σύνδεση σκάει με
+# RuntimeError κατά το authentication handshake.
+cryptography==43.0.1
+
+# Data processing — Feature D (στατιστικά endpoints)
 pandas==2.2.2
 
 # Env var loading από .env αρχείο (για local/manual testing εκτός Docker)
