@@ -1,0 +1,8 @@
+# Dev-only dependencies — ΔΕΝ μπαίνουν στο production Docker image
+# (Dockerfile εγκαθιστά μόνο το requirements.txt). Εγκαταστήστε επιπλέον
+# αυτό το αρχείο ΜΟΝΟ τοπικά/dev, για να τρέξετε τα unit tests.
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#   pytest tests/ -v
+
+pytest==8.3.3
