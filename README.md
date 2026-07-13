@@ -6,7 +6,7 @@ REST API για διαχείριση ενός fleet από POS terminals. Flask 
 ## Οδηγίες εκκίνησης
 
 1. Αντιγράψτε το `.env.example` σε `.env` και συμπληρώστε πραγματικά
-   passwords (δεν πρέπει να ανεβαίνει ποτέ στο git):
+   passwords (ΜΗΝ το ανεβάσετε ποτέ στο git):
    ```bash
    cp .env.example .env
    ```
@@ -76,8 +76,8 @@ tms/
 │   └── smoke_test.ps1          (αυτοματοποιημένο end-to-end test, όλα τα features)
 └── db/
     └── init/
-        ├── 01_schema.sql   
-        └── 02_seed.sql     
+        ├── 01_schema.sql   (το επίσημο schema, όπως δόθηκε από το bootcamp)
+        └── 02_seed.sql     (δικό μας seed — αντικαταστήστε αν δοθεί επίσημο)
 ```
 
 ## Πλήρες End-to-End Test (προτεινόμενο πρώτο βήμα)
@@ -184,11 +184,13 @@ Invoke-RestMethod -Uri http://localhost:5000/terminals/from-template -Method Pos
 hardware_family  : Desktop
 hardware_model   : Desk2600
 mid              : MID000101
-software_version : 12.4.0
 tid              : T0101003
 ```
 Το νέο `tid` (`T0101003`) υπολογίστηκε σωστά ως "επόμενος αριθμός" μετά τα
-υπάρχοντα `T0101001`/`T0101002` του ίδιου merchant.
+υπάρχοντα `T0101001`/`T0101002` του ίδιου merchant. Σημείωση: το response
+πλέον ΔΕΝ περιλαμβάνει `software_version`, αφού το επίσημο `templates`
+schema δεν έχει τέτοια στήλη — το B3 αντιγράφει μόνο `hardware_model`/
+`hardware_family`, όπως ζητάει η εκφώνηση.
 
 **2. Flag (Feature A4):**
 ```powershell
@@ -230,24 +232,40 @@ Invoke-RestMethod : {"error":"terminal already decommissioned"}
 ```
 Αναμενόμενη συμπεριφορά — επιβεβαιώνει το duplicate-decommission guard.
 
-## Σημειώσεις σχεδίασης 
+## Σημειώσεις σχεδίασης (χρήσιμο για το interview/παρουσίαση)
 
 - Το SQLAlchemy χρησιμοποιείται ως connection-pool manager + query builder
   (`text()` με bind parameters), όχι ως πλήρες ORM με model classes — αρκεί
   για τις ανάγκες της εργασίας και κρατάει τον κώδικα απλό.
 - Η στήλη `terminals.updated_on` και ο πίνακας `decommission_queue`
   δημιουργούνται **idempotent** από τον ίδιο τον κώδικα στο startup
-  (`run_startup_migrations()` στο `app/main.py`), όχι μέσα στα `.sql` seed
-  αρχεία — έτσι το app «αυτο-επουλώνεται» ανεξάρτητα από το ποια εκδοχή του
-  επίσημου schema θα χρησιμοποιηθεί τελικά.
+  (`run_startup_migrations()` στο `app/main.py`) — το `updated_on` γιατί
+  δεν υπάρχει στο επίσημο schema (η εκφώνηση το ζητάει ρητά στο Feature
+  A4), και το `decommission_queue` γιατί το φτιάχνουμε εμείς. Το
+  `hardware_family` ΔΕΝ χρειάζεται τέτοια μεταχείριση — υπάρχει ήδη εξ
+  αρχής και στο `terminals` και στο `templates` στο επίσημο schema.
 - Το `/terminals/<tid>/decommission` κάνει `UPDATE` + `INSERT` μέσα στο ίδιο
   transaction (`engine.begin()`), ώστε να μην υπάρχει ποτέ ασυνεπής
   κατάσταση (terminal disabled χωρίς entry στην ουρά, ή αντίστροφα). Το ίδιο
   ισχύει και για το `/terminals/from-template` (υπολογισμός νέου `tid` +
   `INSERT` στο terminals, atomic).
-- Το idempotent column-adding της A4 (`ensure_column()`) γενικεύτηκε ώστε
-  να καλύπτει και τη νέα στήλη `hardware_family` (terminals + templates),
-  αντί να γράψουμε ξεχωριστό, σχεδόν πανομοιότυπο κώδικα για κάθε στήλη.
+- Το `terminals` ΔΕΝ έχει στήλη `mid` απευθείας — έχει `merchant_id` (FK
+  προς `merchants.id`). Το business κωδικό `mid` (π.χ. "MID000101") ζει
+  στο `merchants`, οπότε κάθε endpoint που το χρειάζεται (A1, A2, A3, A5
+  helper, CSV report) κάνει `JOIN merchants m ON m.id = t.merchant_id`.
+  Το Feature D δεν χρειάζεται καθόλου αυτό το JOIN, αφού κανένα στατιστικό
+  δεν ομαδοποιεί βάσει merchant.
+- Ομοίως, το `templates` έχει PK στήλη `id` (όχι `template_id`) — το SQL
+  κάνει πάντα `id AS template_id` ώστε το JSON API contract να μένει
+  σταθερό ανεξάρτητα από το πώς λέγεται η στήλη στη βάση. Το `templates`
+  επίσης ΔΕΝ έχει `software_version`/`description` (έχει αντ' αυτού
+  `template_name`) — το Feature B3 αντιγράφει στο νέο terminal ΜΟΝΟ
+  `hardware_model`/`hardware_family`, ακριβώς όπως ζητάει η εκφώνηση.
+- Η πραγματική στήλη για το "πότε τηλεφώνησε τελευταία φορά" λέγεται
+  `last_call_stamp` (όχι `last_call`) — όλα τα SQL queries κάνουν
+  `last_call_stamp AS last_call`, ώστε το JSON API output και ο Python
+  κώδικας (`row_to_terminal_dict`, `bucket_idle_days`) να μη χρειάζονται
+  καμία αλλαγή.
 - Το Feature C (cache-aside) υλοποιείται με δύο μικρές, επαναχρησιμοποιήσιμες
   helper functions (`cache_get`/`cache_set`) που «καταπίνουν» σιωπηλά
   οποιοδήποτε σφάλμα Redis (log + συνέχεια χωρίς cache) — έτσι το ίδιο

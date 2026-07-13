@@ -5,9 +5,9 @@ main.py — Terminal Management System (TMS) API
 Entrypoint του Flask API. Εδώ:
   - Στήνουμε logging (ΠΑΝΤΑ σε stdout, με timestamp + level + message).
   - Δημιουργούμε connections προς MySQL (μέσω SQLAlchemy) και Redis.
-  - Κάνουμε "safe" / idempotent migrations: προσθέτουμε στήλες που δεν
-    υπάρχουν στο αρχικό schema (`updated_on`, `hardware_family`), και
-    δημιουργούμε το `decommission_queue`.
+  - Κάνουμε "safe" / idempotent migrations: προσθέτουμε τη στήλη
+    `updated_on` που δεν υπάρχει στο επίσημο schema, και δημιουργούμε το
+    `decommission_queue`.
   - Ορίζουμε τα endpoints:
       Feature A (A1-A5) — terminals
       Feature B (B1-B3) — templates + create-from-template
@@ -251,13 +251,11 @@ def ensure_decommission_queue_table() -> None:
 def run_startup_migrations() -> None:
     """Τρέχει όλα τα idempotent migrations πριν σηκωθεί το Flask app."""
     try:
+        # Μόνο το updated_on λείπει πραγματικά από το επίσημο schema (το
+        # hardware_family υπάρχει ήδη εκ κατασκευής και στο terminals και
+        # στο templates — βλ. db/init/01_schema.sql — οπότε δεν χρειάζεται
+        # idempotent προσθήκη γι' αυτό).
         ensure_column("terminals", "updated_on", "DATETIME NULL")
-        # hardware_family: το χρειάζεται το Feature B3 (αντιγράφεται από το
-        # template) και το Feature D3 (groupby στατιστικά). Το προσθέτουμε
-        # idempotent και στους δύο πίνακες, γιατί δεν ξέρουμε αν το επίσημο
-        # schema που θα δοθεί τελικά το περιλαμβάνει ήδη ή όχι.
-        ensure_column("terminals", "hardware_family", "VARCHAR(60) NULL")
-        ensure_column("templates", "hardware_family", "VARCHAR(60) NULL")
         ensure_decommission_queue_table()
     except SQLAlchemyError as exc:
         # Fail fast: προτιμάμε να σκάσει το app ΚΑΤΑ ΤΟ startup παρά να
@@ -358,9 +356,17 @@ def list_terminals():
     """
     enabled_param = request.args.get("enabled")  # None, "true" ή "false" (raw string)
 
+    # ΣΗΜΕΙΩΣΗ σχήματος: το terminals ΔΕΝ έχει στήλη `mid` απευθείας — έχει
+    # `merchant_id` (foreign key -> merchants.id). Το `mid` (το business
+    # κωδικό, π.χ. "MID000101") ζει στο merchants, οπότε κάνουμε πάντα JOIN
+    # για να το φέρουμε. Επίσης η στήλη λέγεται `last_call_stamp` στο
+    # πραγματικό schema — την κάνουμε alias σε `last_call` ώστε το JSON
+    # output (και το row_to_terminal_dict) να μη χρειάζεται καμία αλλαγή.
     base_query = """
-        SELECT tid, mid, hardware_model, software_version, enabled, last_call
-        FROM terminals
+        SELECT t.tid, m.mid AS mid, t.hardware_model, t.software_version,
+               t.enabled, t.last_call_stamp AS last_call
+        FROM terminals t
+        JOIN merchants m ON m.id = t.merchant_id
     """
     params = {}
     # Το ίδιο string χρησιμοποιείται και ως μέρος του cache key, ώστε κάθε
@@ -373,7 +379,7 @@ def list_terminals():
             # Δεν αγνοούμε σιωπηλά άκυρη τιμή (θα ήταν παραπλανητικό — ο
             # χρήστης θα νόμιζε ότι το φίλτρο εφαρμόστηκε). Το κάνουμε 400.
             return jsonify({"error": "invalid 'enabled' query param, expected true/false"}), 400
-        base_query += " WHERE enabled = :enabled_value"
+        base_query += " WHERE t.enabled = :enabled_value"
         params["enabled_value"] = 1 if normalized == "true" else 0
         filter_label = normalized
 
@@ -410,10 +416,11 @@ def get_terminal(tid):
     """
     query = text(
         """
-        SELECT tid, mid, hardware_model, software_version, enabled,
-               last_call, scenario_number, updated_on
-        FROM terminals
-        WHERE tid = :tid
+        SELECT t.tid, m.mid AS mid, t.hardware_model, t.software_version, t.enabled,
+               t.last_call_stamp AS last_call, t.scenario_number, t.updated_on
+        FROM terminals t
+        JOIN merchants m ON m.id = t.merchant_id
+        WHERE t.tid = :tid
         """
     )
     try:
@@ -453,11 +460,13 @@ def list_flagged_terminals():
     """
     query = text(
         """
-        SELECT tid, mid, hardware_model, software_version, enabled, last_call
-        FROM terminals
-        WHERE scenario_number IS NOT NULL
-          AND scenario_number != ''
-          AND scenario_number != '0'
+        SELECT t.tid, m.mid AS mid, t.hardware_model, t.software_version,
+               t.enabled, t.last_call_stamp AS last_call
+        FROM terminals t
+        JOIN merchants m ON m.id = t.merchant_id
+        WHERE t.scenario_number IS NOT NULL
+          AND t.scenario_number != ''
+          AND t.scenario_number != '0'
         """
     )
     try:
@@ -626,9 +635,10 @@ def list_decommissioned():
     query = text(
         """
         SELECT dq.tid, dq.queued_on, dq.delete_after,
-               t.hardware_model, t.mid
+               t.hardware_model, m.mid AS mid
         FROM decommission_queue dq
         JOIN terminals t ON t.tid = dq.tid
+        JOIN merchants m ON m.id = t.merchant_id
         ORDER BY dq.delete_after ASC
         """
     )
@@ -658,13 +668,20 @@ def list_decommissioned():
 # ----------------------------------------------------------------------------
 
 def row_to_template_dict(row) -> dict:
-    """Κοινή helper για B1/B2 (ίδια λογική με row_to_terminal_dict του Feature A)."""
+    """
+    Κοινή helper για B1/B2.
+
+    ΣΗΜΕΙΩΣΗ σχήματος: το επίσημο templates έχει PK στήλη `id` (όχι
+    `template_id`) και δεν έχει καθόλου `software_version`/`description` —
+    έχει αντ' αυτού `template_name`. Το SQL κάνει alias `id AS template_id`
+    ώστε το JSON API contract (`template_id`) να μείνει σταθερό ανεξάρτητα
+    από το πώς λέγεται η στήλη στη βάση.
+    """
     return {
         "template_id": row.template_id,
+        "template_name": row.template_name,
         "hardware_model": row.hardware_model,
         "hardware_family": row.hardware_family,
-        "software_version": row.software_version,
-        "description": row.description,
     }
 
 
@@ -677,9 +694,9 @@ def list_templates():
     """
     query = text(
         """
-        SELECT template_id, hardware_model, hardware_family, software_version, description
+        SELECT id AS template_id, template_name, hardware_model, hardware_family
         FROM templates
-        ORDER BY template_id
+        ORDER BY id
         """
     )
     try:
@@ -702,13 +719,14 @@ def get_template(template_id):
     Σημείωση: χρησιμοποιούμε τον Flask converter <int:template_id> — αν το
     path segment δεν είναι έγκυρος ακέραιος (π.χ. /templates/abc), η Flask
     επιστρέφει αυτόματα 404 πριν καν μπει στο route handler, κάτι απόλυτα
-    συνεπές με το "404 αν δεν υπάρχει" της εκφώνησης.
+    συνεπές με το "404 αν δεν υπάρχει" της εκφώνησης. Στη βάση, το route
+    param αντιστοιχεί στη στήλη `id` (η πραγματική PK του templates).
     """
     query = text(
         """
-        SELECT template_id, hardware_model, hardware_family, software_version, description
+        SELECT id AS template_id, template_name, hardware_model, hardware_family
         FROM templates
-        WHERE template_id = :template_id
+        WHERE id = :template_id
         """
     )
     try:
@@ -765,13 +783,25 @@ def generate_next_tid(conn, mid: str) -> str:
     "Βρώμικη" (I/O) πλευρά: διαβάζει τα υπάρχοντα tids του merchant από τη
     βάση, και αναθέτει τον πραγματικό υπολογισμό στο compute_next_tid().
 
+    ΣΗΜΕΙΩΣΗ σχήματος: το terminals ΔΕΝ έχει στήλη `mid` — μόνο
+    `merchant_id` (FK -> merchants.id). Άρα για να βρούμε "όλα τα tids
+    αυτού του merchant" κάνουμε JOIN μέσω merchants.mid.
+
     Πρέπει να καλείται ΜΕΣΑ σε transaction (ίδιο `conn` με το INSERT που θα
     ακολουθήσει στο create_terminal_from_template), ώστε το SELECT-max-και-
     INSERT να είναι atomic και να μην υπάρχει race condition αν δύο
     requests έρθουν ταυτόχρονα για τον ίδιο mid.
     """
     existing_tids = conn.execute(
-        text("SELECT tid FROM terminals WHERE mid = :mid"), {"mid": mid}
+        text(
+            """
+            SELECT t.tid
+            FROM terminals t
+            JOIN merchants m ON m.id = t.merchant_id
+            WHERE m.mid = :mid
+            """
+        ),
+        {"mid": mid},
     ).scalars().all()
 
     return compute_next_tid(existing_tids, mid)
@@ -784,10 +814,15 @@ def create_terminal_from_template():
     Body: { "template_id": 1, "mid": "MID000101" }
 
     1. Ελέγχει ότι το template υπάρχει (404 αν όχι).
-    2. Ελέγχει ότι το mid υπάρχει στο merchants (404 αν όχι).
+    2. Ελέγχει ότι το mid υπάρχει στο merchants (404 αν όχι) — και παίρνει
+       το ΠΡΑΓΜΑΤΙΚΟ (surrogate) merchants.id, γιατί αυτό χρειάζεται το
+       terminals.merchant_id (foreign key), όχι το business "mid" string.
     3. Υπολογίζει νέο, μοναδικό tid (generate_next_tid).
     4. Εισάγει νέα γραμμή στο terminals, αντιγράφοντας hardware_model και
-       hardware_family από το template.
+       hardware_family από το template (τα ΜΟΝΑ πεδία που έχει το
+       templates schema — δεν υπάρχει software_version σε αυτό, οπότε το
+       νέο terminal μένει με software_version = NULL μέχρι να ενημερωθεί
+       αλλού, π.χ. στο πρώτο πραγματικό provisioning call).
     5. 201 Created με το νέο tid.
 
     Όλα τα βήματα 3-4 τρέχουν ΜΕΣΑ σε ΜΙΑ transaction (engine.begin()),
@@ -805,20 +840,19 @@ def create_terminal_from_template():
         return jsonify({"error": "template_id and mid are required"}), 400
 
     select_template_sql = text(
-        """
-        SELECT hardware_model, hardware_family, software_version
-        FROM templates
-        WHERE template_id = :template_id
-        """
+        "SELECT hardware_model, hardware_family FROM templates WHERE id = :template_id"
     )
-    select_merchant_sql = text("SELECT mid FROM merchants WHERE mid = :mid")
+    # Χρειαζόμαστε το merchants.id (surrogate PK) — ΟΧΙ μόνο επιβεβαίωση ότι
+    # υπάρχει το mid — γιατί αυτό είναι η τιμή που θα μπει στο
+    # terminals.merchant_id (foreign key).
+    select_merchant_sql = text("SELECT id FROM merchants WHERE mid = :mid")
     insert_terminal_sql = text(
         """
         INSERT INTO terminals
-            (tid, mid, hardware_model, hardware_family, software_version,
-             enabled, last_call, scenario_number, updated_on)
+            (tid, merchant_id, template_id, hardware_model, hardware_family,
+             enabled, last_call_stamp, scenario_number, updated_on)
         VALUES
-            (:tid, :mid, :hardware_model, :hardware_family, :software_version,
+            (:tid, :merchant_id, :template_id, :hardware_model, :hardware_family,
              1, NULL, NULL, :now)
         """
     )
@@ -832,16 +866,17 @@ def create_terminal_from_template():
             merchant_row = conn.execute(select_merchant_sql, {"mid": mid}).fetchone()
             if merchant_row is None:
                 return jsonify({"error": "merchant not found"}), 404
+            merchant_pk = merchant_row.id
 
             new_tid = generate_next_tid(conn, mid)
             now = datetime.utcnow()
 
             conn.execute(insert_terminal_sql, {
                 "tid": new_tid,
-                "mid": mid,
+                "merchant_id": merchant_pk,
+                "template_id": template_id,
                 "hardware_model": template_row.hardware_model,
                 "hardware_family": template_row.hardware_family,
-                "software_version": template_row.software_version,
                 "now": now,
             })
 
@@ -852,7 +887,6 @@ def create_terminal_from_template():
             "mid": mid,
             "hardware_model": template_row.hardware_model,
             "hardware_family": template_row.hardware_family,
-            "software_version": template_row.software_version,
         }), 201
     except SQLAlchemyError as exc:
         logger.error(f"create_terminal_from_template - database error: {exc}")
@@ -872,11 +906,17 @@ def load_terminals_dataframe() -> pd.DataFrame:
     D1-D4. Κοινή helper ώστε κάθε endpoint να μην ξαναγράφει το ίδιο
     `pd.read_sql(...)`.
 
+    ΣΗΜΕΙΩΣΗ: δεν χρειάζεται JOIN με merchants εδώ — κανένα από τα D1-D4
+    στατιστικά δεν ομαδοποιεί/φιλτράρει βάσει merchant, οπότε δεν
+    χρειαζόμαστε το `mid`. Η στήλη `last_call_stamp` γίνεται alias σε
+    `last_call` ώστε ο υπόλοιπος κώδικας (bucket_idle_days κ.λπ.) να μη
+    χρειάζεται καμία αλλαγή.
+
     Χρησιμοποιούμε το SQLAlchemy engine απευθείας ως "connectable" στο
     pandas — το pandas κάνει από μόνο του τη διαχείριση connection/cursor.
     """
     query = text(
-        "SELECT tid, mid, hardware_model, hardware_family, enabled, last_call FROM terminals"
+        "SELECT tid, hardware_model, hardware_family, enabled, last_call_stamp AS last_call FROM terminals"
     )
     return pd.read_sql(query, engine)
 
@@ -1009,13 +1049,13 @@ def statistics_idle_distribution():
     """
     D4. GET /statistics/idle-distribution
 
-    Κατανομή terminals ανά ημέρες αδράνειας από το last_call μέχρι σήμερα.
+    Κατανομή terminals ανά ημέρες αδράνειας από το last_call_stamp μέχρι σήμερα.
 
-    ΣΗΜΕΙΩΣΗ ονομασίας πεδίου: η εκφώνηση αναφέρει "last_call_stamp" σε
-    αυτό το κομμάτι, ενώ το Feature A ορίζει τη στήλη ως "last_call" — τα
-    αντιμετωπίζουμε ως το ΙΔΙΟ πεδίο (terminals.last_call), μιας και δεν
-    υπάρχει καμία άλλη αναφορά σε ξεχωριστή στήλη "last_call_stamp" πουθενά
-    αλλού στην εκφώνηση.
+    ΣΗΜΕΙΩΣΗ ονομασίας πεδίου: επιβεβαιώθηκε από το επίσημο schema ότι η
+    πραγματική στήλη λέγεται `last_call_stamp` (όχι `last_call` όπως θα
+    υπέθετε κανείς από το JSON output του Feature A) — το
+    load_terminals_dataframe() κάνει ήδη το alias `AS last_call`, οπότε ο
+    κώδικας εδώ παραμένει αμετάβλητος.
 
     Τα buckets εμφανίζονται με σταθερή, λογική σειρά (όχι αλφαβητική), και
     μόνο όσα έχουν count > 0.
@@ -1076,9 +1116,11 @@ def report_terminals_basic_csv():
     """
     query = text(
         """
-        SELECT tid, mid, hardware_model, software_version, enabled, last_call
-        FROM terminals
-        ORDER BY tid
+        SELECT t.tid, m.mid AS mid, t.hardware_model, t.software_version,
+               t.enabled, t.last_call_stamp AS last_call
+        FROM terminals t
+        JOIN merchants m ON m.id = t.merchant_id
+        ORDER BY t.tid
         """
     )
     try:
