@@ -101,6 +101,66 @@ curl -X POST http://localhost:5000/terminals/T0101001/flag \
 curl http://localhost:5000/terminals   # -> ξανά Cache MISS (invalidated μετά το write)
 ```
 
+## Παράδειγμα Ροής Δοκιμών (Feature B, A4, A5)
+
+Ενδεικτική αλληλουχία calls (από πραγματικό τρέξιμο σε PowerShell) που
+επιβεβαιώνει ότι Feature B, A4 και A5 δουλεύουν σωστά μαζί με το
+transaction/idempotency logic τους.
+
+**1. Δημιουργία terminal από template (Feature B3):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/terminals/from-template -Method Post -ContentType "application/json" -Body '{"template_id": 1, "mid": "MID000101"}'
+```
+```
+hardware_family  : Desktop
+hardware_model   : Desk2600
+mid              : MID000101
+software_version : 12.4.0
+tid              : T0101003
+```
+Το νέο `tid` (`T0101003`) υπολογίστηκε σωστά ως "επόμενος αριθμός" μετά τα
+υπάρχοντα `T0101001`/`T0101002` του ίδιου merchant.
+
+**2. Flag (Feature A4):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/terminals/T0101001/flag -Method Post -ContentType "application/json" -Body '{"scenario_number": "9"}'
+```
+```
+scenario_number tid
+--------------- ---
+9               T0101001
+```
+
+**3. Unflag (Feature A4):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/terminals/T0101001/unflag -Method Post
+```
+```
+scenario_number tid
+--------------- ---
+0               T0101001
+```
+
+**4. Decommission (Feature A5):**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/terminals/T0101001/decommission -Method Post
+```
+```
+delete_after                queued_on                   tid
+------------                ---------                   ---
+2026-07-16T07:03:01.861045  2026-07-13T07:03:01.861045  T0101001
+```
+`delete_after` = `queued_on` + 3 μέρες, όπως ζητάει η εκφώνηση.
+
+**5. Δεύτερο decommission στο ίδιο terminal → σωστά αποτυγχάνει με 409:**
+```powershell
+Invoke-RestMethod -Uri http://localhost:5000/terminals/T0101001/decommission -Method Post
+```
+```
+Invoke-RestMethod : {"error":"terminal already decommissioned"}
+```
+Αναμενόμενη συμπεριφορά — επιβεβαιώνει το duplicate-decommission guard.
+
 ## Σημειώσεις σχεδίασης (χρήσιμο για το interview/παρουσίαση)
 
 - Το SQLAlchemy χρησιμοποιείται ως connection-pool manager + query builder
