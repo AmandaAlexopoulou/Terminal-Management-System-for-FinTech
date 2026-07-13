@@ -10,9 +10,13 @@ REST API για διαχείριση ενός fleet από POS terminals. Flask 
 > τις γενικές τεχνικές απαιτήσεις (`/health`, logging σε stdout, error
 > handling, parameterized queries, secrets σε `.env`).
 >
-> **ΔΕΝ έχει υλοποιηθεί ακόμα** το bonus cron-job για αυτόματο καθαρισμό
-> του `decommission_queue` (προαιρετικό, +5%) — πείτε μου αν το θέλετε και
-> το προσθέτω.
+> **Bonus — και τα 4 υλοποιημένα:**
+> - Cron job (`tms-cron` container) για nightly cleanup του `decommission_queue`
+> - Daily CSV report: `GET /reports/terminals-basic`
+> - Unit tests (pytest): 18 tests σε 4 functions, `app/tests/`
+> - `/health` per service: `tms-api` έχει HTTP `/health`· `mysql`/`redis`
+>   έχουν Docker-level `healthcheck:` (ο καθιερωμένος τρόπος για off-the-shelf
+>   images χωρίς δικό μας HTTP layer)
 >
 > Τα `db/init/01_schema.sql` και `db/init/02_seed.sql` είναι **placeholder**
 > αρχεία (βασισμένα στα πεδία που περιγράφει η εκφώνηση — π.χ. πρόσθεσα
@@ -33,9 +37,10 @@ REST API για διαχείριση ενός fleet από POS terminals. Flask 
    ```bash
    docker compose up --build
    ```
-   Ξεκινάει 3 containers: `tms-mysql`, `tms-redis`, `tms-api`. Το `tms-api`
-   περιμένει (`depends_on` με `condition: service_healthy`) τα άλλα δύο να
-   είναι έτοιμα πριν ξεκινήσει.
+   Ξεκινάει 4 containers: `tms-mysql`, `tms-redis`, `tms-api`, `tms-cron`
+   (bonus). Το `tms-api` και το `tms-cron` περιμένουν (`depends_on` με
+   `condition: service_healthy`) τα απαιτούμενα services να είναι έτοιμα
+   πριν ξεκινήσουν.
 3. Το API είναι διαθέσιμο στο `http://localhost:5000`.
 4. Δοκιμή:
    ```bash
@@ -69,6 +74,7 @@ REST API για διαχείριση ενός fleet από POS terminals. Flask 
 | GET    | `/statistics/by-state`            | Πλήθος ενεργών/ανενεργών terminals (cached, TTL 60s).                 |
 | GET    | `/statistics/by-hardware-family`  | Κατανομή terminals ανά `hardware_family` (cached, TTL 60s).           |
 | GET    | `/statistics/idle-distribution`   | Κατανομή terminals ανά μέρες αδράνειας (cached, TTL 60s).             |
+| GET    | `/reports/terminals-basic`        | [Bonus] Κατεβάζει `terminals_basic.csv` με βασικά στοιχεία terminals. |
 
 ## Δομή project
 
@@ -80,7 +86,15 @@ tms/
 ├── app/
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   └── main.py
+│   ├── requirements-dev.txt   (μόνο pytest — για τοπικά unit tests)
+│   ├── main.py
+│   └── tests/
+│       ├── conftest.py
+│       └── test_main.py
+├── cron/                       (Bonus: nightly decommission cleanup)
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── cleanup.py
 └── db/
     └── init/
         ├── 01_schema.sql   (placeholder — αντικαταστήστε με το επίσημο)
@@ -99,6 +113,50 @@ curl -X POST http://localhost:5000/terminals/T0101001/flag \
      -H "Content-Type: application/json" -d '{"scenario_number": "9"}'
 
 curl http://localhost:5000/terminals   # -> ξανά Cache MISS (invalidated μετά το write)
+```
+
+## Unit Tests (Bonus)
+
+18 tests πάνω σε 4 "καθαρές" (χωρίς I/O) functions: `bucket_idle_days`,
+`compute_next_tid`, `row_to_terminal_dict`, `row_to_template_dict`. Δεν
+χρειάζονται MySQL/Redis up για να τρέξουν.
+
+**Τοπικά:**
+```bash
+cd app
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/ -v
+```
+
+**Μέσα στο ήδη τρέχον container:**
+```bash
+docker compose exec tms-api pytest tests/ -v
+```
+
+## Daily CSV Report (Bonus)
+
+```bash
+curl -o terminals_basic.csv http://localhost:5000/reports/terminals-basic
+```
+Κατεβάζει ένα CSV με `tid, mid, hardware_model, software_version, enabled,
+last_call` για όλα τα terminals — έτοιμο να ανοιχτεί σε Excel.
+
+## Cron Job — Nightly Decommission Cleanup (Bonus)
+
+Το `tms-cron` container τρέχει από μόνο του κάθε βράδυ (default: 02:00 UTC,
+configurable μέσω `CRON_HOUR`/`CRON_MINUTE` στο `.env`) και διαγράφει
+οριστικά terminals με `delete_after < NOW()`, με τη σωστή σειρά (πρώτα
+`decommission_queue`, μετά `terminals`, λόγω του foreign key).
+
+**Για να το δείτε να δουλεύει χωρίς να περιμένετε 24 ώρες**, βάλτε στο
+`.env`:
+```
+CLEANUP_RUN_ON_STARTUP=true
+```
+και κάντε `docker compose up --build` — θα δείτε στα logs του `tms-cron`
+ένα άμεσο cleanup run κατά το startup. Ελέγξτε τα logs με:
+```bash
+docker compose logs -f tms-cron
 ```
 
 ## Παράδειγμα Ροής Δοκιμών (Feature B, A4, A5)
@@ -190,3 +248,13 @@ Invoke-RestMethod : {"error":"terminal already decommissioned"}
   έχει ακόμα κανένα terminal, χρησιμοποιείται ένα fallback πρόθεμα
   βασισμένο στο `mid` (βλ. σχόλιο στο `generate_next_tid()` στο `main.py`
   — η εκφώνηση δεν καλύπτει ρητά αυτή την περίπτωση).
+- Το `tms-cron` container ΔΕΝ χρησιμοποιεί system `cron` daemon — απλό
+  Python process με ένα `while True` loop που υπολογίζει πόσο να κοιμηθεί
+  μέχρι την επόμενη προγραμματισμένη ώρα. Πιο απλό σε containers (χωρίς τα
+  γνωστά προβλήματα του cron daemon με foreground process/stdout logging/
+  env vars), και το ίδιο script τρέχει τη διαγραφή με τη σωστή σειρά
+  (`decommission_queue` πρώτα, `terminals` μετά) μέσα σε μία transaction.
+- Η "καθαρή" λογική του `compute_next_tid()` αποσπάστηκε από το
+  `generate_next_tid()` ειδικά ώστε να γίνεται unit-tested χωρίς βάση
+  δεδομένων — το ίδιο pattern (διαχωρισμός I/O από λογική) θα μπορούσε να
+  εφαρμοστεί και σε άλλα σημεία αν χρειαστεί μεγαλύτερη test coverage.
