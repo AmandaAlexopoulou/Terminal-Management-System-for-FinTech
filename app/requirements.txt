@@ -5,7 +5,8 @@ Flask==3.0.3
 # parameterized query builder μέσω text(), όχι με πλήρη ORM model classes —
 # αρκεί και είναι σαφώς πιο απλό για τις ανάγκες της εργασίας)
 SQLAlchemy==2.0.32
-
+cryptography==43.0.1
+#χρειάστηκε λόγω αιφνιδίου σφάλματος
 # MySQL driver (dialect "mysql+pymysql://" που χρησιμοποιεί το SQLAlchemy)
 PyMySQL==1.1.1
 
