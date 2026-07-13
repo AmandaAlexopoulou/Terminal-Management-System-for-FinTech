@@ -1,0 +1,12 @@
+# Το cron container ΔΕΝ χρειάζεται Flask/pandas/redis — μόνο ό,τι χρειάζεται
+# για να συνδεθεί στη MySQL και να τρέξει τα δύο DELETE statements.
+
+SQLAlchemy==2.0.32
+PyMySQL==1.1.1
+
+# Απαιτείται από το PyMySQL για το auth method "caching_sha2_password" της
+# MySQL 8 (ίδιο ζήτημα/λύση με το app/requirements.txt).
+cryptography==43.0.1
+
+# Env var loading από .env αρχείο (για local/manual testing εκτός Docker)
+python-dotenv==1.0.1
