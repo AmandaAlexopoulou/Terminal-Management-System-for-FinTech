@@ -76,13 +76,13 @@ tms/
 │   └── smoke_test.ps1          (αυτοματοποιημένο end-to-end test, όλα τα features)
 └── db/
     └── init/
-        ├── 01_schema.sql   (το επίσημο schema, όπως δόθηκε από το bootcamp)
-        └── 02_seed.sql     (δικό μας seed — αντικαταστήστε αν δοθεί επίσημο)
+        ├── 01_schema.sql   (given)
+        └── 02_seed.sql     (given)
 ```
 
 ## Πλήρες End-to-End Test (προτεινόμενο πρώτο βήμα)
 
-Αντί να τρέχετε endpoints ένα-ένα χειροκίνητα, το `scripts/smoke_test.ps1`
+Αντί να τρέχουν endpoints ένα-ένα χειροκίνητα, το `scripts/smoke_test.ps1`
 περνάει από **όλα** τα features (A, B, C, D + τα 3 bonus) σε μία εκτέλεση,
 με καθαρό OK/FAIL output ανά βήμα:
 
