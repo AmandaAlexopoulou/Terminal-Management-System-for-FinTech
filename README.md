@@ -3,33 +3,10 @@
 REST API για διαχείριση ενός fleet από POS terminals. Flask + MySQL + Redis,
 όλα μέσα σε Docker Compose.
 
-> ⚠️ **Κατάσταση εργασίας.** Υλοποιημένα: **Μέρος 0-1 (setup/Docker/DB)**,
-> **Feature A** (terminals, A1-A5), **Feature B** (templates, B1-B3),
-> **Feature C** (Redis cache-aside + invalidation, ενσωματωμένο μέσα στα A1
-> και D1-D4) και **Feature D** (στατιστικά με Pandas, D1-D4), μαζί με όλες
-> τις γενικές τεχνικές απαιτήσεις (`/health`, logging σε stdout, error
-> handling, parameterized queries, secrets σε `.env`).
->
-> **Bonus — και τα 4 υλοποιημένα:**
-> - Cron job (`tms-cron` container) για nightly cleanup του `decommission_queue`
-> - Daily CSV report: `GET /reports/terminals-basic`
-> - Unit tests (pytest): 18 tests σε 4 functions, `app/tests/`
-> - `/health` per service: `tms-api` έχει HTTP `/health`· `mysql`/`redis`
->   έχουν Docker-level `healthcheck:` (ο καθιερωμένος τρόπος για off-the-shelf
->   images χωρίς δικό μας HTTP layer)
->
-> Τα `db/init/01_schema.sql` και `db/init/02_seed.sql` είναι **placeholder**
-> αρχεία (βασισμένα στα πεδία που περιγράφει η εκφώνηση — π.χ. πρόσθεσα
-> `hardware_family` και έκανα το `templates.template_id` αριθμητικό
-> auto-increment, ώστε να ταιριάζει με το παράδειγμα body του B3), γιατί τα
-> πραγματικά "θα δοθούν" από το bootcamp. **Αντικαταστήστε τα με τα επίσημα
-> πριν την τελική παράδοση** — αν το επίσημο schema έχει διαφορετικά
-> ονόματα/τύπους στηλών, θα χρειαστούν μικρές προσαρμογές στο `main.py`.
-
 ## Οδηγίες εκκίνησης
 
 1. Αντιγράψτε το `.env.example` σε `.env` και συμπληρώστε πραγματικά
-   passwords (ΜΗΝ το ανεβάσετε ποτέ στο git):
+   passwords (δεν πρέπει να ανεβαίνει ποτέ στο git):
    ```bash
    cp .env.example .env
    ```
@@ -99,8 +76,8 @@ tms/
 │   └── smoke_test.ps1          (αυτοματοποιημένο end-to-end test, όλα τα features)
 └── db/
     └── init/
-        ├── 01_schema.sql   (placeholder — αντικαταστήστε με το επίσημο)
-        └── 02_seed.sql     (placeholder — αντικαταστήστε με το επίσημο)
+        ├── 01_schema.sql   
+        └── 02_seed.sql     
 ```
 
 ## Πλήρες End-to-End Test (προτεινόμενο πρώτο βήμα)
@@ -253,7 +230,7 @@ Invoke-RestMethod : {"error":"terminal already decommissioned"}
 ```
 Αναμενόμενη συμπεριφορά — επιβεβαιώνει το duplicate-decommission guard.
 
-## Σημειώσεις σχεδίασης
+## Σημειώσεις σχεδίασης 
 
 - Το SQLAlchemy χρησιμοποιείται ως connection-pool manager + query builder
   (`text()` με bind parameters), όχι ως πλήρες ORM με model classes — αρκεί
